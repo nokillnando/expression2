@@ -67,12 +67,15 @@
 @persist [EngineDirectionAxis ChassisFeedDirectionAxis ChassisFeedForwardDirectionAxis]:vector
 
 # Version
-@persist Version:string URL:string Checked
+@persist Version:string VersionChecked RequestSent GithubURL:string SpawnTime AllowCheckVersion
 @autoupdate
 
 ################################################################################################################################
 #[
 Changelog:
+
+V2.198
+Added online version check and an option to enable it
 
 V2.197
 Added support for Wire Clutch brakes, bugs could be expected as some parts of the brake code had to be changed
@@ -121,7 +124,7 @@ Autoupdate the config file on spawn somehow
 function initializeConfigs()
 {
     Tick = tickInterval()
-    Version = "2.197"
+    Version = "2.198"
  
     if(Direction == 0){print("Direction variable not set in config file, some things might not work correctly!")}
     
@@ -245,50 +248,72 @@ function void loadSounds() {
 }
 
 
-function checkVersion()
+function checkVersiononspawn()
 {
-URL = "https://raw.githubusercontent.com/youruser/yourrepo/branch/corefile.txt"
-Checked = 0
-
-if (first()) {
-    if (httpCanRequest()) {
-        httpRequest(URL)
-    }
-}
-
-if (httpSuccess() & !Checked) {
-    Checked = 1
-    Data = httpData()
-
-    #// Find position of 'Version = "'
-    StartIndex = Data:find("Version = \"")
-    if (StartIndex != 0) {
-        #// Position right after the quote
-        VersionStart = StartIndex + 10
-       # // Find closing quote
-        EndIndex = Data:find("\"", VersionStart)
+    if(AllowCheckVersion)
+    {
+        # GitHub raw file URL
+        GithubURL = "https://raw.github.com/nokillnando/expression2/main/EngineE2_Lib/simulated_engine_core.txt"
         
-        if (EndIndex != 0) {
-           # // Extract version substring
-            OnlineVersion = Data:sub(VersionStart, EndIndex - 1)
-            
-           # // Convert to numbers for comparison
-            LocalNum = Version:toNumber()
-            OnlineNum = OnlineVersion:toNumber()
-            
-            if (OnlineNum > LocalNum) {
-                print("Update Available! Online version: " + OnlineVersion + " | Local version: " + Version)
-            } else {
-                print("No update needed. Local version: " + Version)
-            }
-        } else {
-            print("Failed to parse online version (no closing quote found).")
+        # Set spawn time on first spawn/dupe
+        if((first()|duped()|dupefinished()) & !SpawnTime)
+        {
+            SpawnTime = curtime()
         }
-    } else {
-        print("Failed to find version string in the HTTP data.")
+        
+        # Wait 2 seconds after spawn before making request
+        if(SpawnTime & (curtime() - SpawnTime > 1) & !RequestSent & !VersionChecked)
+        {
+            if (httpCanRequest()) {
+                httpRequest(GithubURL)
+                RequestSent = 1
+            }
+        }
+        
+        # Check response every tick until we get one
+        if (RequestSent & !VersionChecked) {
+            if (httpSuccess() & httpData() != "") {
+                # Extract version from HTTP data
+                HttpData = httpData()
+                VersionStart = HttpData:find("Version = \"") + 11
+                VersionEnd = HttpData:find("\"", VersionStart)
+                
+                if (VersionStart > 11 & VersionEnd > VersionStart) {
+                    RemoteVersion = HttpData:sub(VersionStart, VersionEnd - 1)
+                    LocalVersion = Version
+                    
+                    # Simple version comparison
+                    RemoteNum = RemoteVersion:explode(".")
+                    LocalNum = LocalVersion:explode(".")
+                    
+                    RemoteMajor = RemoteNum[1, string]:toNumber()
+                    RemoteMinor = RemoteNum[2, string]:toNumber()
+                    LocalMajor = LocalNum[1, string]:toNumber()
+                    LocalMinor = LocalNum[2, string]:toNumber()
+                    
+                    if (RemoteMajor > LocalMajor | (RemoteMajor == LocalMajor & RemoteMinor > LocalMinor)) {
+                        hint("Check config file for updated default variables",4)
+                        hint("Core E2 Update available! Local: " + LocalVersion + " | Remote: " + RemoteVersion
+                         + "\n" + "Check config file for URL",5)
+                        
+                    } else {
+                        hint("Local Core E2 is up to date or higher than online! Version: " + LocalVersion,4)
+                    }
+                } else {
+                    hint("Core E2 version check failed - could not parse remote version",4)
+                }
+                
+                VersionChecked = 1
+            } 
+            elseif (!httpSuccess() & (curtime() - SpawnTime > 10)) {
+                # If request failed after 10 seconds total
+                print("Core E2 version check failed - could not connect to remote")
+                VersionChecked = 1
+            }
+        }
     }
 }
-}
+
 
 
 

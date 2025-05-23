@@ -8,6 +8,9 @@
 #[
 NOTES:
 
+Github URL:
+https://raw.github.com/nokillnando/expression2/main/EngineE2_Lib/simulated_engine_core.txt
+
 If your car is braking when going forward then change the Direction here
 Or when using autogears and pressing S to brake kills you engine(Because it thinks it can go into reverse)
 
@@ -265,6 +268,7 @@ if (first()|duped()) {
 }
 
 runOnTick(1)
+checkVersiononspawn()
 
 
 # Main engine loop - runs every tick
