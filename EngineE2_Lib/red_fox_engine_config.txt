@@ -45,7 +45,7 @@ This is version has been tested but nonetheless it is still prone to bugs
 
 ]#
 if (first()|duped()) {
-    
+    AllowCheckVersion = 1
     UseExtraConfig = 1
     
     if(UseExtraConfig)
