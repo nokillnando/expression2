@@ -73,6 +73,8 @@
 ################################################################################################################################
 #[
 Changelog:
+V2.198a
+Minor print fix
 
 V2.198
 Added online version check and an option to enable it
@@ -124,7 +126,7 @@ Autoupdate the config file on spawn somehow
 function initializeConfigs()
 {
     Tick = tickInterval()
-    Version = "2.198"
+    Version = "2.198a"
  
     if(Direction == 0){print("Direction variable not set in config file, some things might not work correctly!")}
     
@@ -359,6 +361,7 @@ if (changed(POD_Active) | POD_Active) {
     # Only allow manual mode toggle when ClassicAuto is enabled
     if (ManualModeEnabled && ClassicAuto) {
         Driver = POD["Driver", entity]
+        DriverHint = POD["Entity", entity]
         Key_Manual = Driver:keyPressed(ManualModeKey)
         
         # Toggle manual mode when key is pressed
@@ -368,14 +371,14 @@ if (changed(POD_Active) | POD_Active) {
             C:soundPlay("Mode_Change", 0, "buttons/button14.wav")
             soundVolume("Mode_Change", 0.3)
             # Visual feedback (optional)
-            print("Manual Mode: " + (IsInManualMode ? "Enabled" : "Disabled"))
+            DriverHint:printDriver("Manual Mode: " + (IsInManualMode ? "Enabled" : "Disabled"))
         }
     }
 
 
 # Comfort/Sport mode toggle
 if (UseComfortSportMode) {
-    if (!Driver) { Driver = POD["Driver", entity] }
+    if (!Driver) { Driver = POD["Driver", entity] DriverHint = POD["Entity", entity] }
     Key_ComfortSport = Driver:keyPressed(ComfortSportModeKey)
     
     # Toggle sport mode permanently when ComfortSportModeKey is pressed
@@ -383,7 +386,7 @@ if (UseComfortSportMode) {
         IsInSportMode = !IsInSportMode
         C:soundPlay("Sport_Mode", 0, "buttons/button17.wav")
         soundVolume("Sport_Mode", 0.3)
-        print("Mode: " + (IsInSportMode ? "Sport" : "Comfort"))
+        DriverHint:printDriver("Mode: " + (IsInSportMode ? "Sport" : "Comfort"))
     }
 }
 
