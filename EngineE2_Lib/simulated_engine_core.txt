@@ -49,7 +49,7 @@
 @persist InManualReverseMode ReverseGearChanged ManualReverseGear
 @persist ReverseEngaged ReverseGearChangeTimer ForwardGearChangeTimer LastGearChangeTime
 @persist ReverseExitAttempt ForwardGearChangeRequested LastGearChangeDirection ForceGearChange
-@persist CurrentSportMode Key_ComfortSport Key_Manual
+@persist CurrentSportMode Key_ComfortSport Key_Manual LastKeyS LastKeyW
 
 # Sound effects
 @persist [GearChangeSound StarterSound BellSound]:string GearChangeSoundTimer
@@ -60,7 +60,7 @@
 @persist StoppedBrake FirstPhaseBrakeF FirstPhaseBrakeR FirstPhaseBrakeSpeed
 @persist SecondPhaseBrakeF SecondPhaseBrakeR SecondPhaseBrakeSpeed
 @persist ThirdPhaseBrakeF ThirdPhaseBrakeR ThirdPhaseBrakeSpeed
-@persist ChassisAccFeed ChassisAccFeedMult StoppedBrakeMult HandbrakePowerMult
+@persist ChassisAccFeed ChassisAccFeedMult StoppedBrakeMult HandbrakePowerMult ClutchWhileBraking:string IsCoastingToStop
 
 # Direction & dynamics
 @persist [EngineDirection ChassisFeedDirection ChassisFeedForwardDirection]:vector
@@ -73,6 +73,11 @@
 ################################################################################################################################
 #[
 Changelog:
+
+V2.2
+A bunch of fixes relating to brake and clutch, new option for clutch as well "ClutchWhileBraking"
+Does as it name says
+
 V2.198a
 Minor print fix
 
@@ -126,7 +131,20 @@ Autoupdate the config file on spawn somehow
 function initializeConfigs()
 {
     Tick = tickInterval()
-    Version = "2.198a"
+    
+    #// An uninitialized @persist string defaults to "".
+    if (ClutchWhileBraking == "")
+    {
+        #// If it's an empty string, it was not set in the config.
+        #// Default the behavior to "true".
+        ClutchWhileBraking = "true"
+        
+        #// Print a helpful message to the user's chat.
+        print("NOTICE: 'ClutchWhileBraking' not found in your config file.")
+        print("Defaulting to \"true\". Please add ClutchWhileBraking = \"true\" (or \"false\") to your config.")
+    }
+    
+    Version = "2.2"
  
     if(Direction == 0){print("Direction variable not set in config file, some things might not work correctly!")}
     
@@ -374,7 +392,12 @@ if (changed(POD_Active) | POD_Active) {
             DriverHint:printDriver("Manual Mode: " + (IsInManualMode ? "Enabled" : "Disabled"))
         }
     }
-
+local IsAccelerating = 0
+if (!InReverse && Key_W) {
+    IsAccelerating = 1
+} elseif (InReverse && Key_S) { #// Assuming default S for reverse throttle
+    IsAccelerating = 1
+}
 
 # Comfort/Sport mode toggle
 if (UseComfortSportMode) {
@@ -535,6 +558,9 @@ if(!AutoGear)
 {   
     #Brake += (Key_S - Brake) * 0.155
     Brake = Key_S
+    
+    # THE CRITICAL FIX: Define 'Braking' for manual mode.
+    Braking = Brake
 }else
 {
     if(ClassicAuto&GearMode==0){Brake = 1 Braking = 1 InReverse = 0}
@@ -552,34 +578,18 @@ if(!AutoGear)
  
         
     }
-    elseif (Gearbox_Gear >= 1 && Key_S) 
-    {
-        
-        if(SpeedN>SpeedToReverse)
-        {
-            Braking = 1
-        }
-        #Brake += (1 - Brake) * 0.155  # Smooth increase of Brake
-        Brake = Key_S  # Ensures Brake is applied only if Key_S is pressed
-        
-        if(!Key_Space || Key_Space && Key_Alt)
-        {
-            Gearbox_Clutch = 1
-        }
-        
-    } elseif (InReverse && Key_W) {
-        
-        if(SpeedN<SpeedToReverse*-1)
-        {
-            Braking = 1
-        }
-        #Brake += (1 - Brake) * 0.155  # Smooth increase of Brake
-        Brake = Key_W  # Ensures Brake is applied only if Key_W is pressed
-    } else
-    {
-        Braking = 0
-        Brake = 0
-    }
+        elseif (Gearbox_Gear >= 1 && Key_S) #// Player is braking while in a forward gear
+{
+    Braking = 1
+    Brake = 1
+    #// We will handle ALL clutch logic later, in a dedicated block.
+} elseif (InReverse && Key_W) { #// Braking in reverse
+    Braking = 1
+    Brake = 1
+} else {
+    Braking = 0 #// If neither of the above, we are not braking
+    Brake = 0
+}
     
     
 if(Key_S&InReverse&!Key_W){Brake=0}
@@ -592,210 +602,141 @@ if(Key_S&InReverse&!Key_W){Brake=0}
 if (!Key_Alt&AutoGear) {
 
 # Handle gear change logic
-if (!InReverse&!Braking||(ClassicAuto&GearMode==3)) {
-    
-        
-        if (Gearbox_Gear >= 1 & Key_S) {
-            Gearbox_Gear = Gearbox_Gear
-            Gearbox_Clutch = 1
-            Engine_Throttle = 0
-        }
-        #fix maybe
-        if (Gearbox_Gear <= 1) {
-            # When exiting reverse, set to first gear
-            Gearbox_Gear = 1
-            timer("Gear_Change", Gearbox_Delay)
-        }
-    
+#// =================== START: REPLACEMENT BLOCK ===================
 
-    if((Key_W&InReverse&SpeedN>=-SpeedToReverse) || (ClassicAuto&(GearMode == 0 | GearMode >= 2)))
-    {
-        InReverse = 0
-        if (Gearbox_Gear < 0) {
-            # When exiting reverse, set to first gear
-            Gearbox_Gear = 1
-            timer("Gear_Change", Gearbox_Delay)
-        }
-    }
-    if(ImmediateReverseEngage) {
-        # Immediately engage reverse when requested regardless of speed
-        if((!ClassicAuto & Key_S) | (ClassicAuto & GearMode == 1)) {
-            InReverse = 1
-            # Ensure gear is set immediately for reverse
-            if(InReverse & Gearbox_Gear >= 0) {
-                Gearbox_Gear = -1
-                timer("Gear_Change", Gearbox_Delay)
-            }
-        }
-    } else {
-        # Original behavior
-        if((Key_S & Speed<=SpeedToReverse)&!ClassicAuto | (Key_S & SpeedN<=SpeedToReverse)&!ClassicAuto |ClassicAuto&GearMode == 1)
-        {
-            InReverse = 1
-        }elseif(SpeedN<-1&!InReverse)
-        {
-           InReverse = 1
-        } 
-    }
-    
-# Replace the problematic section (around line 736-778) with:
-# Only change gears automatically if not in manual mode
-if (!IsInManualMode) {
-    # Check whether to use RPM-based or speed-based shifting
-    if (UseRPMBasedGear) {
-        # RPM-based shifting logic...
-        local RPMPercent = (Engine_RPM / Engine_Redline) * 100
-        if(UseComfortSportMode)
-        {
-            UpshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
-            DownshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportDownshiftRPM : ComfortDownshiftRPM
-        }elseif(!UseComfortSportMode)
-        {
-            UpshiftRPM = SportUpshiftRPM
-            DownshiftRPM = SportDownshiftRPM
-        }
-        
-        # Upshift/downshift logic based on RPM...
-        if (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count()) {
-            # Start or update the gear change timer
-            if (!clk("Gear_Timer")) {
-                timer("Gear_Timer", Min_Gear_Time)
-            }
-            
-            # If the timer is done, upshift
-            if (clk("Gear_Timer")) {
-                Gearbox_Gear++
-                timer("Gear_Change", Gearbox_Delay)
-            }
-        }
-        # Check for downshift
-        elseif (RPMPercent <= DownshiftRPM && Gearbox_Gear > 1) {
-            # Start or update the gear change timer
-            if (!clk("Gear_Timer")) {
-                timer("Gear_Timer", Min_Gear_Time)
-            }
-            
-            # If the timer is done, downshift
-            if (clk("Gear_Timer")) {
-                Gearbox_Gear--
-                timer("Gear_Change", Gearbox_Delay)
-            }
-        }
-    } else {
-        # Always use speed-based gear logic when UseRPMBasedGear is disabled
-        for (I = 1, GearSpeeds:count()) {
-            if (Speed <= GearSpeeds[I, number] && !InReverse) {
-                # Check if the gear change is needed
-                if (Gearbox_Gear != I) {
-                    # Start or update the gear change timer
-                    if (!clk("Gear_Timer")) {
-                        timer("Gear_Timer", Min_Gear_Time)
-                    }
+# Handle gear change logic
 
-                    # If the timer is done and the gear has changed
-                    if (clk("Gear_Timer")) {
-                        Gearbox_Gear = I
-                        timer("Gear_Change", Gearbox_Delay)
-                    }
-                }
-                break
-            }
-        }
-    }
-}
-    Gearbox_Ratio = Gearbox_Ratios[Gearbox_Gear, number] * Gearbox_FinalDrive
+#// --- Part A: Logic for Forward Gears & Neutral ---
+if (!InReverse) {
     
-} # Find the reverse gear logic section (around line 820) and replace with:
-elseif(InReverse&!Braking|(ClassicAuto&GearMode==1)) {
-    # Reverse gear logic
-    if (Gearbox_Gear >= 1 & Key_S) {
-        Gearbox_Gear = Gearbox_Gear
-        Gearbox_Clutch = 1
-        Engine_Throttle = 0
-    }
-    
-    if(Key_S & Speed<=SpeedToReverse | Key_S & SpeedN<=SpeedToReverse | (ClassicAuto&GearMode == 1))
+    #/#/ A1: Handle shifting INTO reverse from a forward/neutral gear.
+    #// This is the gatekeeper logic. It will only engage reverse if speed is very low.
+    #// This prevents braking at high speed from being misinterpreted as a request for reverse gear.
+    if ( (Key_S & !LastKeyS & SpeedN <= SpeedToReverse & !ClassicAuto) || (ClassicAuto & GearMode == 1) )
     {
         InReverse = 1
-    }elseif(SpeedN>=0&InReverse)
-    {
-       InReverse = 0
-    }
-    
-    # Critical fix: Force transition to forward gear when W is pressed
-    if(Key_W & SpeedN>=-SpeedToReverse & !ClassicAuto) {
-        InReverse = 0
-        if(Gearbox_Gear < 0) {
-            Gearbox_Gear = 1  # Set to first gear
+        if (Gearbox_Gear >= 0) {
+            Gearbox_Gear = -1
             timer("Gear_Change", Gearbox_Delay)
-            # Apply full clutch during transition
-            Gearbox_Clutch = 1
-            Clutch_Delay = 1
         }
     }
-    
-    # Only handle automatic reverse gear changes if not trying to go forward
-    if (!Key_W && !IsInManualMode) {
-        # Check whether to use RPM-based or speed-based shifting
+
+    #// A2: Automatic FORWARD gear shifting logic.
+    #// This block is now INDEPENDENT of the 'Braking' flag.
+    #// It will run whether you are accelerating, coasting, or braking.
+    if (!IsInManualMode && !InReverse) { #// The '!InReverse' check prevents this from running in the same tick we switch to reverse.
         if (UseRPMBasedGear) {
-            # RPM-based reverse shifting logic...
+            # RPM-based shifting logic
             local RPMPercent = (Engine_RPM / Engine_Redline) * 100
-            if(UseComfortSportMode)
-            {
-                UpshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
-                DownshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportDownshiftRPM : ComfortDownshiftRPM
-            }elseif(!UseComfortSportMode)
-            {
-                UpshiftRPM = SportUpshiftRPM
-                DownshiftRPM = SportDownshiftRPM
-            }
+            local UpshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
+            local DownshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportDownshiftRPM : ComfortDownshiftRPM
             
-            # Upshift (lower gear number in reverse, e.g., -1 to -2)
-            if (RPMPercent >= UpshiftRPM && Gearbox_Gear > -ReverseGearRatios:count()) {
-                if (!clk("Reverse_Gear_Timer")) {
-                    timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time)
-                }
-    
-                if (clk("Reverse_Gear_Timer")) {
-                    Gearbox_Gear--
-                    timer("Reverse_Change", Gearbox_Delay)
-                }
+            # Upshift logic
+            if (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25) {
+                if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
+                if (clk("Gear_Timer")) { Gearbox_Gear++ timer("Gear_Change", Gearbox_Delay) }
             }
-            # Downshift (higher gear number in reverse, e.g., -3 to -2)
-            elseif (RPMPercent <= DownshiftRPM && Gearbox_Gear < -1) {
-                if (!clk("Reverse_Gear_Timer")) {
-                    timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time)
-                }
-    
-                if (clk("Reverse_Gear_Timer")) {
-                    Gearbox_Gear++
-                    timer("Reverse_Change", Gearbox_Delay)
+            # Downshift logic (THIS WILL NOW WORK WHILE BRAKING)
+             elseif (RPMPercent <= DownshiftRPM && Gearbox_Gear > 1 && Engine_Throttle < 0.1) {
+                #// THE FIX: Predict the RPM of the next gear down BEFORE shifting.
+                local NextGearRatio = Gearbox_Ratios[Gearbox_Gear - 1, number] * Gearbox_FinalDrive
+                local PredictedRPM = Flywheel_RPM * NextGearRatio
+            
+                #// Only allow the downshift if the predicted RPM is below the redline.
+                if (PredictedRPM < Engine_Redline) {
+                    if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
+                    if (clk("Gear_Timer")) {
+                        Gearbox_Gear--
+                        timer("Gear_Change", Gearbox_Delay)
+                       # // Ensure throttle is cut during the shift for smoothness
+                        Throttle_Delay = 1
+                    }
                 }
             }
         } else {
-            # Speed-based reverse gear logic
-            for (I = 1, ReverseGearSpeeds:count()) {
-                if (Speed <= ReverseGearSpeeds[I, number] && InReverse) {
-                    # Check if the gear change is needed
-                    if (Gearbox_Gear != -I) {
-                        # Start or update the gear change timer
-                        if (!clk("Reverse_Gear_Timer")) {
-                            timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time)
-                        }
-    
-                        # If the timer is done and the gear has changed
-                        if (clk("Reverse_Gear_Timer")) {
-                            Gearbox_Gear = -I
-                            timer("Reverse_Change", Gearbox_Delay)
-                        }
+            # Speed-based shifting logic
+            for (I = 1, GearSpeeds:count()) {
+                if (Speed <= GearSpeeds[I, number]) {
+                    # Check if a gear change is needed (THIS WILL NOW WORK WHILE BRAKING)
+                    if (Gearbox_Gear != I) {
+                        if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
+                        if (clk("Gear_Timer")) { Gearbox_Gear = I timer("Gear_Change", Gearbox_Delay) }
                     }
                     break
                 }
             }
         }
     }
-    Gearbox_Ratio = ReverseGearRatios[Gearbox_Gear * -1, number] * Gearbox_FinalDrive
+    
+    #// A3: Set the final gear ratio for forward gears
+    if (!InReverse) {
+        Gearbox_Ratio = Gearbox_Ratios[Gearbox_Gear, number] * Gearbox_FinalDrive
+    }
+} 
+#// --- Part B: Logic for Reverse Gears ---
+elseif (InReverse) {
+    
+    #// B1: Handle shifting OUT of reverse into a forward gear.
+    if ( (Key_W & !LastKeyW & SpeedN >= -SpeedToReverse & !ClassicAuto) || (ClassicAuto && GearMode >= 2) )
+    {
+        InReverse = 0
+        Braking = 0 #// Ensure braking flag is cleared when moving to a forward gear
+        if (Gearbox_Gear < 1) {
+            Gearbox_Gear = 1 #// Shift to 1st gear
+            timer("Gear_Change", Gearbox_Delay)
+        }
+    }
+    
+    #// B2: Automatic REVERSE gear shifting logic.
+    if (!IsInManualMode && InReverse) { #// Check 'InReverse' to ensure we are meant to be here.
+        if (UseRPMBasedGear) {
+            # RPM-based reverse shifting logic...
+            local RPMPercent = (Engine_RPM / Engine_Redline) * 100
+            local UpshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
+            local DownshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportDownshiftRPM : ComfortDownshiftRPM
+            
+            if (RPMPercent >= UpshiftRPM && Gearbox_Gear > -ReverseGearRatios:count() && Engine_Throttle > 0.25) {
+                if (!clk("Reverse_Gear_Timer")) { timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time) }
+                if (clk("Reverse_Gear_Timer")) { Gearbox_Gear-- timer("Reverse_Change", Gearbox_Delay) }
+            }
+             elseif (RPMPercent <= DownshiftRPM && Gearbox_Gear < -1 && Engine_Throttle < 0.1) {
+                #// THE FIX: Predict the RPM for the next reverse gear down.
+                local NextGearRatio = ReverseGearRatios[abs(Gearbox_Gear + 1), number] * Gearbox_FinalDrive
+                local PredictedRPM = Flywheel_RPM * NextGearRatio
+            
+                #// Only allow the downshift if the predicted RPM is safe.
+                if (PredictedRPM < Engine_Redline) {
+                    if (!clk("Reverse_Gear_Timer")) { timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time) }
+                    if (clk("Reverse_Gear_Timer")) {
+                        Gearbox_Gear++
+                        timer("Reverse_Change", Gearbox_Delay)
+                        #// Ensure throttle is cut during the shift for smoothness
+                        #Throttle_Delay = 1
+                    }
+                }
+            }
+        } else {
+            # Speed-based reverse gear logic
+            for (I = 1, ReverseGearSpeeds:count()) {
+                if (Speed <= ReverseGearSpeeds[I, number]) {
+                    if (Gearbox_Gear != -I) {
+                        if (!clk("Reverse_Gear_Timer")) { timer("Reverse_Gear_Timer", Min_Reverse_Gear_Time) }
+                        if (clk("Reverse_Gear_Timer")) { Gearbox_Gear = -I timer("Reverse_Change", Gearbox_Delay) }
+                    }
+                    break
+                }
+            }
+        }
+    }
+    
+    #// B3: Set the final gear ratio for reverse gears
+    if (InReverse) {
+        Gearbox_Ratio = ReverseGearRatios[Gearbox_Gear * -1, number] * Gearbox_FinalDrive
+    }
 }
+
+#// =================== END: REPLACEMENT BLOCK ===================
+
 }
 # Don't override gears if in manual mode
 if(!IsInManualMode) {
@@ -1075,76 +1016,73 @@ if(PowerDistribution == 0) { #// RWD
 } else { #// AWD
     Flywheel_RPM = Flywheels_RPM:average()
 }
-Gearbox_Clutch -= Gearbox_Clutch * Gearbox_ClutchSpeed
-if(!AutoGear)
-{
-    if (!Gearbox_Gear | Clutch_Delay | Key_Alt) {Gearbox_Clutch = 1}
-}else
-{
-    if (!Gearbox_Gear || Clutch_Delay || Key_Alt || !(Key_W || Key_S)&Speed<=5||(ClassicAuto&GearMode==2))
-    {  
+#Gearbox_Clutch -= Gearbox_Clutch * Gearbox_ClutchSpeed
+#// =================================================================
+#// --- MASTER CLUTCH CONTROL (Brake-phase hard lock) ---
+
+# Default: clutch disengaged unless a condition engages it.
+Gearbox_Clutch = 0
+
+# --- PRIORITY 1: Absolute Safety & Manual Overrides ---
+if (!Gearbox_Gear || Clutch_Delay == 1 || Key_Alt || Key_Space) {
+    Gearbox_Clutch = 1
+}
+
+# --- PRIORITY 2: Driving Logic ---
+# Absolute brake-phase override  works in Auto & Manual
+if (Braking == 1 && abs(SpeedN) <= StoppedPhaseBrakeSpeed && !(Key_W || Key_S)) {
+    # Treat as if holding brake pedal  clutch fully engaged with brakes
+    Gearbox_Clutch = 1
+} else {
+    if (AutoGear)
+    {
+        if (Braking == 1) {
+            if (ClutchWhileBraking == "true") {
+                Gearbox_Clutch = 1
+            } else {
+                if (abs(SpeedN) <= (StoppedPhaseBrakeSpeed + 15)) {
+                    Gearbox_Clutch = 1 - clamp((abs(SpeedN) - StoppedPhaseBrakeSpeed) / 15, 0, 1)
+                }
+            }
+        }elseif(!(Key_W||Key_S)&Speed<=StoppedPhaseBrakeSpeed)
+                {
+                    Gearbox_Clutch = 1
+                }
+    }
+    else # Manual mode
+    {
+        if (Braking == 1) {
+            if (ClutchWhileBraking == "true") {
+                Gearbox_Clutch = 1
+            } else {
+                if (abs(SpeedN) <= (StoppedPhaseBrakeSpeed + 15)) {
+                    Gearbox_Clutch = 1 - clamp((abs(SpeedN) - StoppedPhaseBrakeSpeed) / 15, 0, 1)
+                }
+            }
+        }elseif(!(Key_W||Key_S)&Speed<=StoppedPhaseBrakeSpeed)
+                {
+                    Gearbox_Clutch = 1
+                }
+    }
+
+    # Autohold at standstill
+    if (Gearbox_Clutch == 0 && Speed < 1 && !(Key_W || Key_S)) {
         Gearbox_Clutch = 1
-    
-    }elseif((Brake) && Key_Space&&InReverse || Key_Space &&Key_Alt)
-    
-        {  
-             Gearbox_Clutch = 1
-        }elseif(((Brake) && (Key_W || Key_S)&&!Key_Space))
-        {
-            Gearbox_Clutch = 1
-        }
-        elseif (Key_Space)
-        {
-            Gearbox_Clutch = max(Gearbox_Clutch, 0.25)
-        }
-        if(Key_S&InReverse)
-        {
-            #Gearbox_Clutch = 0
-        }
+    }
 
-}
-if(!AutoGear)
-{
-    if(Key_S)
-    {
-        if(Key_S && Key_F)
-        {
-            Gearbox_Clutch=1
-        }else{Gearbox_Clutch=1}
-    }
-}else
-{
-   if(Key_S)
-    {
-        if(Key_S && Key_F)
-        {
-            Gearbox_Clutch=1
+    # --- FINAL STEP: Low RPM Anti-Stall ---
+    if (Gearbox_Clutch < 1 && (AutoGear || (UseClutchLerpInManual && !AutoGear))) {
+        local RpmClutch = 0
+        if (InReverse) {
+            RpmClutch = max(0, ClutchLerpReverse - (Engine_RPM / Engine_Redline))
+        } else {
+            RpmClutch = max(0, ClutchLerp - (Engine_RPM / Engine_Redline))
         }
-    } 
+        Gearbox_Clutch = max(Gearbox_Clutch, RpmClutch)
+    }
 }
-if (Key_Space) {Gearbox_Clutch = max(Gearbox_Clutch, 0.25)}
+#// =================================================================
 
-if(AutoGear)
-{
-    if(!InReverse)
-    {
-        Gearbox_Clutch = max(Gearbox_Clutch, ClutchLerp - (Engine_RPM / Engine_Redline), 0)
-    }else
-    {
-        Gearbox_Clutch = max(Gearbox_Clutch, ClutchLerpReverse - (Engine_RPM / Engine_Redline), 0)
-    }
-}
-if(UseClutchLerpInManual & !AutoGear)
-{
-    if(Gearbox_Gear>=1)
-    {
-        Gearbox_Clutch = max(Gearbox_Clutch, ClutchLerp - (Engine_RPM / Engine_Redline), 0)
-    }else
-    {
-        Gearbox_Clutch = max(Gearbox_Clutch, ClutchLerpReverse - (Engine_RPM / Engine_Redline), 0)
-    }
-}
- 
 Engine_RealRPM = (Engine_RPM * Gearbox_Clutch) + ((Flywheel_RPM * Gearbox_Ratio) * (1 - Gearbox_Clutch))
  
 
@@ -1190,7 +1128,13 @@ if (Fuel_Enabled) {
 }
  
 Engine_Throttle *= Engine_Active
-Engine_Throttle *= !Throttle_Delay
+
+#// --- FIX: A gear change (Clutch_Delay) must ALWAYS cut the throttle. ---
+if (Clutch_Delay == 1) {
+    Engine_Throttle = 0
+} else {
+    Engine_Throttle *= !Throttle_Delay
+}
  
 # Manage engine power cut
 Engine_PowerCut += ((Engine_RealRPM > Engine_Redline) ? 1 : -1)
@@ -1302,7 +1246,8 @@ soundVolume("On", Engine_Volume * Engine_SoundOnVolume)
  
 soundPitch("Off", (Engine_RPM / Engine_SoundOffDiv) * 155 + (50 * Engine_Active) * Engine_SoundOffPitchMult)
 soundVolume("Off", ((1 - Engine_Volume) ^ 1.5) * Engine_SoundOffVolume)
-
+LastKeyS = Key_S
+LastKeyW = Key_W
 }
 
 
