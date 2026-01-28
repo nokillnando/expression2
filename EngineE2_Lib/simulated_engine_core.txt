@@ -38,7 +38,7 @@
 # Driving & power logic
 @persist Drivetrain HandbrakePower StoppedPhaseBrakeSpeed ReverseWSonReverse
 @persist AutoGear SpeedToReverse Min_Gear_Time Min_Reverse_Gear_Time ClutchLerp ClutchLerpReverse
-@persist DriftSlipTolerance GearSpeedRatios:array
+@persist DriftSlipTolerance GearSpeedRatios:array StuckAtRedlineTimer
 
 # Manual and sport mode system
 @persist ManualModeEnabled ManualModeKey:string IsInManualMode
@@ -672,7 +672,34 @@ if (!InReverse) {
                 }
             }
 
-            if (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25 && !IsSlipping) {
+            local UpshiftCondition = (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25)
+            
+            # Failsafe Logic: If we SHOULD shift but 'IsSlipping' is stopping us...
+            if (UpshiftCondition && IsSlipping) {
+                # Check Lateral Speed (Side-Slip). Drifting > 15 km/h approx.
+                local LateralSpeed = toUnit("km/h", C:velL():y())
+                
+                # Only activate failsafe if moving STRAIGHT (Likely a bug/stuck gear)
+                if (abs(LateralSpeed) < 15) {
+                    if (!clk("Stuck_Timer")) { timer("Stuck_Timer", 2000) } # 2 Seconds wait
+                    
+                    if (clk("Stuck_Timer")) { 
+                        IsSlipping = 0 # Force Overide
+                        hint("Failsafe: Auto-corrected gear ratio!", 3)
+                        # Fix the learned ratio so it doesn't happen again
+                        local CurrentRatioCorrection = Speed / Engine_RPM
+                        GearSpeedRatios[Gearbox_Gear, number] = CurrentRatioCorrection
+                    }
+                } else {
+                    # If we are drifting sideways, RESET the timer. Allow infinite drift.
+                    stoptimer("Stuck_Timer")
+                }
+            } else {
+                # Not stuck, reset timer
+                stoptimer("Stuck_Timer")
+            }
+
+            if (UpshiftCondition && !IsSlipping) {
                 if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
                 if (clk("Gear_Timer")) { Gearbox_Gear++ timer("Gear_Change", Gearbox_Delay) }
             }
