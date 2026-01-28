@@ -38,6 +38,7 @@
 # Driving & power logic
 @persist Drivetrain HandbrakePower StoppedPhaseBrakeSpeed ReverseWSonReverse
 @persist AutoGear SpeedToReverse Min_Gear_Time Min_Reverse_Gear_Time ClutchLerp ClutchLerpReverse
+@persist DriftSlipTolerance GearSpeedRatios:array
 
 # Manual and sport mode system
 @persist ManualModeEnabled ManualModeKey:string IsInManualMode
@@ -73,6 +74,11 @@
 ################################################################################################################################
 #[
 Changelog:
+V2.22
+Better behaviour for auto shifting in rpm based setting, not perfect but works
+
+V2.2a
+Fixed http extension, should not error anymore
 
 V2.2
 A bunch of fixes relating to brake and clutch, new option for clutch as well "ClutchWhileBraking"
@@ -144,7 +150,10 @@ function initializeConfigs()
         print("Defaulting to \"true\". Please add ClutchWhileBraking = \"true\" (or \"false\") to your config.")
     }
     
-    Version = "2.2"
+    if(DriftSlipTolerance == 0) { DriftSlipTolerance = 0.70 }
+    GearSpeedRatios = array()
+    
+    Version = "2.22"
  
     if(Direction == 0){print("Direction variable not set in config file, some things might not work correctly!")}
     
@@ -266,7 +275,7 @@ function void loadSounds() {
 
     #runOnLast(1)
 }
-
+#ifdef httpCanRequest()
 
 function checkVersiononspawn()
 {
@@ -333,6 +342,13 @@ function checkVersiononspawn()
         }
     }
 }
+#else
+    function checkVersiononspawn()
+    {
+        print("Core E2 version check failed - HTTP function not activated!")
+        VersionChecked = 1
+    }
+#endif
 
 
 
@@ -627,28 +643,70 @@ if (!InReverse) {
     if (!IsInManualMode && !InReverse) { #// The '!InReverse' check prevents this from running in the same tick we switch to reverse.
         if (UseRPMBasedGear) {
             # RPM-based shifting logic
+            local KickdownActive = Engine_Throttle > 0.9
+            
             local RPMPercent = (Engine_RPM / Engine_Redline) * 100
-            local UpshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
+            
+            # Upshift Logic: If Kickdown is active, FORCE Sport Mode behavior (High RPM shifts)
+            # This prevents the "Comfort Mode" early upshift from fighting the kickdown
+            local UpshiftRPM = (KickdownActive || CurrentSportMode || AlwaysSportMode) ? SportUpshiftRPM : ComfortUpshiftRPM
             local DownshiftRPM = (CurrentSportMode || AlwaysSportMode) ? SportDownshiftRPM : ComfortDownshiftRPM
+
+            # Adaptive Learning: Learn expected speed/RPM ratio when traction is good
+            if (Gearbox_Gear > 0 && Engine_Throttle > 0.5 && Gearbox_Clutch == 0 && Engine_RPM > Engine_Idle) {
+                local CurrentRatio = Speed / Engine_RPM
+                # Store the highest ratio seen (indicates best traction)
+                if (CurrentRatio > GearSpeedRatios[Gearbox_Gear, number]) {
+                    GearSpeedRatios[Gearbox_Gear, number] = CurrentRatio
+                }
+            }
             
             # Upshift logic
-            if (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25) {
+            # Check for slip (Drift protection)
+            local IsSlipping = 0
+            local LearnedRatio = GearSpeedRatios[Gearbox_Gear, number]
+            if (LearnedRatio > 0 && DriftSlipTolerance > 0) {
+                local CurrentRatio = Speed / Engine_RPM
+                if (CurrentRatio < LearnedRatio * DriftSlipTolerance) {
+                    IsSlipping = 1
+                }
+            }
+
+            if (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25 && !IsSlipping) {
                 if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
                 if (clk("Gear_Timer")) { Gearbox_Gear++ timer("Gear_Change", Gearbox_Delay) }
             }
-            # Downshift logic (THIS WILL NOW WORK WHILE BRAKING)
-             elseif (RPMPercent <= DownshiftRPM && Gearbox_Gear > 1 && Engine_Throttle < 0.1) {
-                #// THE FIX: Predict the RPM of the next gear down BEFORE shifting.
-                local NextGearRatio = Gearbox_Ratios[Gearbox_Gear - 1, number] * Gearbox_FinalDrive
-                local PredictedRPM = Flywheel_RPM * NextGearRatio
+            # Downshift logic (Smart: Kickdown + Panic Recovery + Anti-Hunt)
+            local PanicRecovery = RPMPercent < 20
             
-                #// Only allow the downshift if the predicted RPM is below the redline.
-                if (PredictedRPM < Engine_Redline) {
-                    if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
+            # Effective downshift threshold: Normal or Kickdown (aggressive)
+            # Tweaked: Lowered kickdown threshold to ensure we don't aim for a gear that is too short
+            local EffectiveDownshiftRPM = DownshiftRPM
+            if (KickdownActive) { EffectiveDownshiftRPM = UpshiftRPM - 20 } 
+
+            # Use faster timer for panic recovery (bogging down)
+            local ShiftTime = PanicRecovery ? 50 : Min_Gear_Time
+            
+            # Condition: Below threshold. AND Gear > 1.
+            # REMOVED: Conflicting "Kickdown && < 80" clause. EffectiveDownshiftRPM handles it safely now.
+            if ((RPMPercent <= EffectiveDownshiftRPM) && Gearbox_Gear > 1) {
+                
+                # Predict new RPM to prevent "Hunting" (Shifting down then immediately up)
+                # FIX: Use Engine_RPM and relative ratio instead of Flywheel (which might be slipping)
+                local CurrentGearRatio = Gearbox_Ratios[Gearbox_Gear, number] * Gearbox_FinalDrive
+                local NextGearRatio = Gearbox_Ratios[Gearbox_Gear - 1, number] * Gearbox_FinalDrive
+                local RatioStep = NextGearRatio / CurrentGearRatio
+                
+                local PredictedRPM = Engine_RPM * RatioStep
+                local PredictedRPMPercent = (PredictedRPM / Engine_Redline) * 100
+            
+                # Safety Guard: Only downshift if predicted RPM is safe AND won't trigger immediate upshift
+                # Increased buffer from 5 to 10
+                if (PredictedRPM < Engine_Redline && PredictedRPMPercent < (UpshiftRPM - 10)) {
+                    if (!clk("Gear_Timer")) { timer("Gear_Timer", ShiftTime) }
                     if (clk("Gear_Timer")) {
                         Gearbox_Gear--
                         timer("Gear_Change", Gearbox_Delay)
-                       # // Ensure throttle is cut during the shift for smoothness
                         Throttle_Delay = 1
                     }
                 }

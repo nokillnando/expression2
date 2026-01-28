@@ -91,25 +91,27 @@ if (first()|duped()) {
     }
     
     #SpeedN direction, REALLY important if you are using autogears, debug it and watch if its positive or not
-    Direction = -1
+    Direction = 1
     
     # ENGINE CONFIGURATION - Edit these values to customize your engine
 
     # Power Distribution (0 = RWD, 100 = FWD, values between = AWD with percentage to front)
-    PowerDistribution = 50  # Default to RWD power distribution
+    PowerDistribution = 100  # Default to RWD power distribution
     
     # Brake and Handling Settings
-    HandbrakePowerMult = 4
-    BrakeMult = 1
+    HandbrakePowerMult = 3
+    BrakeMult = 2.25
     WireClutchBrakes = 0
     
     # Transmission Settings
     AutoGear = 0           # 0 = Manual, 1 = Automatic
     ClassicAuto = 0        # Classic P R N D 1 2 auto
-    ClutchWhileBraking = "true" #true or false, or any string than true, does as the name implies
+    ClutchWhileBraking = "false" #true or false, or any string than true, does as the name implies
     
     ManualModeEnabled = 1  # Enable manual mode option in ClassicAuto
     ManualModeKey = "M"    # Key to toggle manual mode
+    
+    DriftSlipTolerance = 0.70 # Tolerance for slip detection (0.70 = 70% of expected speed). Lower if it shifts too early.
     
     # Comfort/Sport Mode Settings, usable only with UseRPMBasedGear
     
@@ -124,8 +126,8 @@ if (first()|duped()) {
     ComfortDownshiftRPM = 35      # Downshift at % of redline in comfort mode
     ComfortUpshiftRPM = 55        # Upshift at % of redline in comfort mode
     
-    SportUpshiftRPM = 80          # Upshift at % of redline in sport mode
-    SportDownshiftRPM = 50        # Downshift at % of redline in sport mode
+    SportUpshiftRPM = 90          # Upshift at % of redline in sport mode
+    SportDownshiftRPM = 55        # Downshift at % of redline in sport mode
     
     # Reverse Settings
     ReverseWSonReverse = 1        # Reverse WS controls when in reverse
@@ -147,7 +149,7 @@ if (first()|duped()) {
     StoppedPhaseBrakeSpeed = 5
     
     # Brake Force Distribution
-    StoppedBrakeMult = 4
+    StoppedBrakeMult = 3
     
     FirstPhaseBrakeR = 0.7
     FirstPhaseBrakeF = 0.9
@@ -160,13 +162,13 @@ if (first()|duped()) {
     
     # Physics Settings
     ChassisAccFeedMult = 39.37
-    BrakeFeedBMult = 0.5 #Chassis braking movement
+    BrakeFeedBMult = 1 #Chassis braking movement
     
     # Engine Specifications
-    Engine_Bore = 65
-    Engine_Stroke = 66
-    Engine_Cylinders = 3
-    Engine_Airflow = 115
+    Engine_Bore = 80
+    Engine_Stroke = 75
+    Engine_Cylinders = 8
+    Engine_Airflow = 100
     Engine_Idle = 800
     Engine_IdleRev = 0.1
     Engine_RevLimiter = 1
@@ -175,7 +177,7 @@ if (first()|duped()) {
     Engine_Configuration = 0  # 0 = Inline, 1 = V Does NOT make any difference beyond naming
     
     #Engine redline
-    Engine_Redline = 6000
+    Engine_Redline = 8000
     
     # Gear Ratios
     Gearbox_Ratios = array(
@@ -206,7 +208,7 @@ if (first()|duped()) {
     )
     
     # Gearbox Settings
-    Gearbox_FinalDrive = 6.30
+    Gearbox_FinalDrive = 5.30
     Gearbox_Delay = 250
     Gearbox_ClutchSpeed = 1
     Gearbox_LockValue = 0.05
@@ -218,7 +220,7 @@ if (first()|duped()) {
     Air_Density = 0.0012
     
     # Turbo Settings
-    Turbo = 1                 # 0 = No Turbo, 1 = Turbo
+    Turbo = 0                 # 0 = No Turbo, 1 = Turbo
     Turbo_Exp = 1
     Turbo_Inertia = 0.035
     Turbo_FlowScale = 100
@@ -228,7 +230,7 @@ if (first()|duped()) {
     Turbo_MaxRPM = 9000
     
     # Sound Settings
-    Engine_SoundOn = "acf_extra/vehiclefx/engines/l4/mini_onhigh.WAV"
+    Engine_SoundOn = "acf_engines/i4_special.wav"
     Engine_SoundOnDiv = 9000
     Engine_SoundOnPitchMult = 1
     Engine_SoundOnVolume = 0.75
@@ -236,7 +238,7 @@ if (first()|duped()) {
     Engine_SoundOverallDiv = 9000
     Engine_SoundOverallVol = 0.25
     
-    Engine_SoundOff = "acf_extra/vehiclefx/engines/l4/mini_onverylow.WAV"
+    Engine_SoundOff = "acf_engines/i4_petrolsmall2.wav"
     Engine_SoundOffDiv = 9000
     Engine_SoundOffPitchMult = 1
     Engine_SoundOffVolume = 0.25
@@ -271,7 +273,9 @@ if (first()|duped()) {
 }
 
 runOnTick(1)
-checkVersiononspawn()
+if (!VersionChecked) {
+    checkVersiononspawn()
+}
 
 
 # Main engine loop - runs every tick
