@@ -38,7 +38,7 @@
 # Driving & power logic
 @persist Drivetrain HandbrakePower StoppedPhaseBrakeSpeed ReverseWSonReverse
 @persist AutoGear SpeedToReverse Min_Gear_Time Min_Reverse_Gear_Time ClutchLerp ClutchLerpReverse
-@persist DriftSlipTolerance GearSpeedRatios:array StuckAtRedlineTimer
+@persist DriftSlipTolerance GearSpeedRatios:array StuckAtRedlineTimer LastUpshiftTime
 
 # Manual and sport mode system
 @persist ManualModeEnabled ManualModeKey:string IsInManualMode
@@ -674,11 +674,14 @@ if (!InReverse) {
 
             local UpshiftCondition = (RPMPercent >= UpshiftRPM && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.25)
             
+            # Shared: Calculate Lateral Speed for both Failsafe and Cornering Logic
+            local LateralSpeed = toUnit("km/h", C:velL():y())
+
             # Failsafe Logic: If we SHOULD shift but 'IsSlipping' is stopping us...
-            if (UpshiftCondition && IsSlipping) {
-                # Check Lateral Speed (Side-Slip). Drifting > 15 km/h approx.
-                local LateralSpeed = toUnit("km/h", C:velL():y())
-                
+            # FIX: Lower threshold to 75% and ensure throttle is significant (50%)
+            local StuckCondition = (RPMPercent > 75 && Gearbox_Gear < Gearbox_Ratios:count() && Engine_Throttle > 0.50)
+            
+            if (StuckCondition && IsSlipping) {
                 # Only activate failsafe if moving STRAIGHT (Likely a bug/stuck gear)
                 if (abs(LateralSpeed) < 15) {
                     if (!clk("Stuck_Timer")) { timer("Stuck_Timer", 2000) } # 2 Seconds wait
@@ -691,17 +694,48 @@ if (!InReverse) {
                         GearSpeedRatios[Gearbox_Gear, number] = CurrentRatioCorrection
                     }
                 } else {
-                    # If we are drifting sideways, RESET the timer. Allow infinite drift.
                     stoptimer("Stuck_Timer")
                 }
             } else {
-                # Not stuck, reset timer
                 stoptimer("Stuck_Timer")
             }
+            
+            # Hysteresis Guard: Predict if the next gear will drop us below the downshift threshold
+            local SafeToShift = 1
+            if (UpshiftCondition) {
+                 local NextGearIdx = clamp(Gearbox_Gear + 1, 1, Gearbox_Ratios:count())
+                 local CurrentGR = Gearbox_Ratios[Gearbox_Gear, number]
+                 local NextGR = Gearbox_Ratios[NextGearIdx, number]
+                 
+                 if (CurrentGR != 0) {
+                     local RatioDrop = NextGR / CurrentGR
+                     local LandingRPM = Engine_RPM * RatioDrop
+                     local LandingPercent = (LandingRPM / Engine_Redline) * 100
+                     
+                     # Determine what the downshift point would be
+                     local TargetDownshift = DownshiftRPM
+                     if (KickdownActive) { TargetDownshift = UpshiftRPM - 20 }
+                     
+                     # If we land too close to the downshift point, CANCEL SHIFT
+                     # UNLESS we are critically high in RPM (>92%), then we MUST shift.
+                     if (LandingPercent < (TargetDownshift + 5) && RPMPercent < 92) {
+                         SafeToShift = 0
+                     }
+                 }
+            }
+            
+            # Cornering Guard: Hold gear if cornering hard (>20km/h Lat) unless redlining (92% threshold)
+            if (abs(LateralSpeed) > 20 && RPMPercent < 92) {
+                SafeToShift = 0
+            }
 
-            if (UpshiftCondition && !IsSlipping) {
+            if (UpshiftCondition && SafeToShift && !IsSlipping) {
                 if (!clk("Gear_Timer")) { timer("Gear_Timer", Min_Gear_Time) }
-                if (clk("Gear_Timer")) { Gearbox_Gear++ timer("Gear_Change", Gearbox_Delay) }
+                if (clk("Gear_Timer")) { 
+                    Gearbox_Gear++ 
+                    timer("Gear_Change", Gearbox_Delay) 
+                    LastUpshiftTime = curtime() # Record time for Grace Period
+                }
             }
             # Downshift logic (Smart: Kickdown + Panic Recovery + Anti-Hunt)
             local PanicRecovery = RPMPercent < 20
@@ -715,8 +749,10 @@ if (!InReverse) {
             local ShiftTime = PanicRecovery ? 50 : Min_Gear_Time
             
             # Condition: Below threshold. AND Gear > 1.
-            # REMOVED: Conflicting "Kickdown && < 80" clause. EffectiveDownshiftRPM handles it safely now.
-            if ((RPMPercent <= EffectiveDownshiftRPM) && Gearbox_Gear > 1) {
+            # Grace Period: Don't downshift immediately after an upshift (0.75s Wait), UNLESS Panic Recovery.
+            local GracePeriodActive = (curtime() - LastUpshiftTime) < 0.75
+            
+            if ((RPMPercent <= EffectiveDownshiftRPM) && Gearbox_Gear > 1 && (!GracePeriodActive || PanicRecovery)) {
                 
                 # Predict new RPM to prevent "Hunting" (Shifting down then immediately up)
                 # FIX: Use Engine_RPM and relative ratio instead of Flywheel (which might be slipping)
